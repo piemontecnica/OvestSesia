@@ -299,7 +299,7 @@ var bases = {
 bases.sat.addTo(map);
 
 map.createPane('plan');  map.getPane('plan').style.zIndex = 250;
-map.getPane('plan').classList.add('pane-plan','multiply');
+map.getPane('plan').classList.add('pane-plan');
 map.createPane('water'); map.getPane('water').style.zIndex = 380;
 map.createPane('work');  map.getPane('work').style.zIndex = 400;
 map.createPane('track'); map.getPane('track').style.zIndex = 420;
@@ -373,7 +373,7 @@ LAYERS.forEach(function(o){
   if(o.id==='planimetria'){
     var pc=document.createElement('div'); pc.className='planctl'; pc.hidden=!o.on;
     pc.innerHTML='<label for="op">Opacità <input type="range" id="op" min="0" max="100" value="85"><output id="opv">85%</output></label>'+
-      '<label style="margin-top:6px"><input type="checkbox" id="mul" checked style="accent-color:'+C.prugna+'"> Rendi trasparente il fondo bianco</label>';
+      '<label style="margin-top:6px"><input type="checkbox" id="mul" style="accent-color:'+C.prugna+'"> Rendi trasparente il fondo bianco</label>';
     lc.appendChild(pc);
     pc.querySelector('#op').addEventListener('input',function(e){planimetria.setOpacity(e.target.value/100);pc.querySelector('#opv').textContent=e.target.value+'%';});
     pc.querySelector('#mul').addEventListener('change',function(e){map.getPane('plan').classList.toggle('multiply',e.target.checked);});
