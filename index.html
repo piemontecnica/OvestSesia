@@ -79,6 +79,21 @@ details.raw table{border-collapse:collapse;margin-top:4px;width:100%}
 details.raw td{border-top:1px solid var(--line);padding:2px 4px;vertical-align:top;word-break:break-all}
 .note{font-size:12.5px;color:var(--muted);margin:2px 0 10px}
 
+.station{border:1px solid var(--line);border-radius:10px;margin-bottom:12px;overflow:hidden;background:var(--paper)}
+.station .st-hd{display:flex;flex-direction:column;gap:8px;padding:10px 12px}
+.station .actions{margin-top:0;flex:0 0 auto}
+.station .name{font-weight:600;font-size:15px;line-height:1.2}
+.station .river{font-size:12.5px;color:var(--muted)}
+.station .st-val{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:0 12px}
+.station .val{font-size:30px;font-weight:600;line-height:1.1;font-variant-numeric:tabular-nums;color:var(--petrolio)}
+:root[data-theme="dark"] .station .val{color:var(--acqua)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .station .val{color:var(--acqua)}}
+.station .val small{font-size:15px;font-weight:500}
+.station .when{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.station .trend{padding:0 12px;font-size:13px;color:var(--muted)}
+.station .trend.up{color:var(--prugna);font-weight:500}
+.station .spark{display:block;width:100%;height:auto;padding:6px 8px 8px}
+.station iframe{display:block;width:100%;height:340px;border:0;border-top:1px solid var(--line);background:#fff}
 /* bollettini */
 .links{list-style:none;margin:0;padding:0}
 .links li{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
@@ -185,10 +200,9 @@ dialog .fallback{font-size:12.5px;color:var(--muted);padding:8px 16px;border-top
 
   <div class="scroll">
     <section class="blk" aria-labelledby="h-idro">
-      <h2 id="h-idro">Idrometri di riferimento <small id="upd">collegamento…</small></h2>
-      <p class="note">Primi idrometri ARPA a monte dell’area di intervento. Livello riferito allo zero idrometrico; dato aggiornato ogni 10 minuti con circa un’ora di ritardo.</p>
+      <h2 id="h-idro">Idrometri di riferimento <small id="upd"></small></h2>
+      <p class="note">Primi idrometri ARPA a monte dell’area di intervento. Livello riferito allo zero idrometrico, ultimi 3 giorni, aggiornato ogni 10 minuti.</p>
       <div id="gauges"></div>
-      <div class="row"><button class="btn" id="refresh" type="button">Aggiorna</button><span class="note" style="margin:0" id="next"></span></div>
     </section>
 
     <section class="blk" aria-labelledby="h-boll">
@@ -257,6 +271,13 @@ dialog .fallback{font-size:12.5px;color:var(--muted);padding:8px 16px;border-top
 var D = window.LAYERS;
 var ARPA_SERVICE = 'https://webgis.arpa.piemonte.it/server/rest/services/meteorologia_clima/TR_idrometri/MapServer/4/query';
 var REFRESH_MIN = 10;
+/* Livelli idrometrici: file data/idrometri.json aggiornato ogni 10 minuti dalla
+   GitHub Action (API ARPA "api_realtime", endpoint /data_pie). ARPA non consente la
+   lettura diretta dal browser (CORS). Se il file manca o ha più di 3 ore, le schede
+   mostrano il grafico ARPA della stazione. API_BASE resta disponibile per un eventuale
+   intermediario con CORS abilitato; vuoto = non usato. */
+var API_BASE = '';
+var MAX_AGE_H = 3;
 var STATO = {0:['Normale',1],1:['Normale',1],2:['Guardia',2],3:['Pericolo',3],4:['Dato non disponibile',0]};
 var RIVER = {'San Sebastiano Po':'Fiume Po','Verolengo Dora Baltea':'Fiume Dora Baltea'};
 var KEYS  = {'San Sebastiano Po':'SEBASTIANO','Verolengo Dora Baltea':'VEROLENGO'};
@@ -319,7 +340,7 @@ var deviazione = L.geoJSON(D.deviazione_ciclabile,{pane:'track',style:{color:'#e
 var gaugeSvg='<svg viewBox="0 0 24 24" fill="none" stroke="#146c69" stroke-width="2" stroke-linecap="round"><path d="M7 3v18M7 6h4M7 10h3M7 14h4M7 18h3"/><path d="M13 15c2-1.6 4-1.6 6 0" stroke="#20aca8"/><path d="M13 19c2-1.6 4-1.6 6 0" stroke="#20aca8"/></svg>';
 var idroMarkers = {};
 var idrometri = L.geoJSON(D.idrometri,{pointToLayer:function(f,ll){
-    var m=L.marker(ll,{icon:idroIcon(0),title:'Apri il grafico dei livelli – '+f.properties.Nome,zIndexOffset:600});
+    var m=L.marker(ll,{icon:idroIcon(1),title:'Apri il grafico dei livelli – '+f.properties.Nome,zIndexOffset:600});
     idroMarkers[f.properties.Nome]=m;
     m.on('click',function(){ openEmbed(f.properties.Link,'Idrometro '+f.properties.Nome+' – andamento del livello'); });
     m.bindTooltip(esc(f.properties.Nome),{permanent:true,direction:'right',offset:[18,0],className:'lbl'});
@@ -391,20 +412,17 @@ document.addEventListener('click',function(e){
   var b=e.target.closest('[data-embed]'); if(b){openEmbed(b.dataset.embed,b.dataset.title);}
 });
 
-/* ---------- idrometri: schede e letture ---------- */
+/* ---------- idrometri: livello da API ARPA, grafico ARPA come riserva ---------- */
 var gWrap=document.getElementById('gauges');
-var cards={};
+var cards=[];
 D.idrometri.features.forEach(function(f){
-  var p=f.properties, n=p.Nome;
-  var el=document.createElement('article'); el.className='gauge';
-  el.innerHTML='<div class="tube" aria-hidden="true"><div class="fill"></div></div>'+
-    '<div><div class="name">'+esc(n)+'</div><div class="river">'+esc(RIVER[n]||'')+'</div>'+
-    '<div class="val" aria-live="polite">– <small>m</small></div>'+
-    '<div class="when"><span class="badge">in attesa</span> <span class="t"></span></div>'+
-    '<div class="actions"><button class="btn solid" type="button" data-embed="'+esc(p.Link)+'" data-title="Idrometro '+esc(n)+' – andamento del livello">Grafico livelli</button>'+
-    '<button class="btn" type="button" data-loc="'+esc(n)+'">Mostra in mappa</button></div>'+
-    '<details class="raw"><summary>Dettaglio dato ARPA</summary><table></table></details></div>';
-  gWrap.appendChild(el); cards[n]={el:el,f:f};
+  var p=f.properties, n=p.Nome, id=(p.Link.match(/id=(\d+)/)||[])[1]||'';
+  var el=document.createElement('article'); el.className='station';
+  el.innerHTML='<div class="st-hd"><div><div class="name">'+esc(n)+'</div><div class="river">'+esc(RIVER[n]||'')+'</div></div>'+
+    '<div class="actions"><button class="btn solid" type="button" data-embed="'+esc(p.Link)+'" data-title="Idrometro '+esc(n)+' – andamento del livello">Grafico ARPA</button>'+
+    '<button class="btn" type="button" data-loc="'+esc(n)+'">In mappa</button></div></div>'+
+    '<div class="st-body"></div>';
+  gWrap.appendChild(el); cards.push({el:el,name:n,link:p.Link,id:id});
 });
 gWrap.addEventListener('click',function(e){
   var b=e.target.closest('[data-loc]'); if(!b) return;
@@ -413,121 +431,88 @@ gWrap.addEventListener('click',function(e){
   map.flyTo(m.getLatLng(),13,{duration:.8});
 });
 
-function jsonp(url){
-  return new Promise(function(res,rej){
-    var cb='arpa_cb_'+Date.now()+Math.floor(Math.random()*1e4);
-    var s=document.createElement('script'); var t=setTimeout(function(){clean();rej(new Error('timeout'));},15000);
-    function clean(){clearTimeout(t);delete window[cb];s.remove();}
-    window[cb]=function(d){clean();res(d);};
-    s.onerror=function(){clean();rej(new Error('jsonp'));};
-    s.src=url+'&callback='+cb; document.head.appendChild(s);
-  });
-}
-var ARPA_URLS = [
-  ARPA_SERVICE,
-  'https://webgis.arpa.piemonte.it/ags/rest/services/meteorologia_clima/TR_idrometri/MapServer/4/query'
-];
-var CACHE_MAX_H = 3;
-function fetchJSON(url){
-  return fetch(url,{cache:'no-store'}).then(function(r){if(!r.ok) throw new Error('HTTP '+r.status); return r.json();})
-    .then(function(d){ if(!d||!d.features||!d.features.length) throw new Error((d&&d.error&&d.error.message)||'risposta vuota'); return d; });
-}
-/* 1) copia aggiornata dalla GitHub Action (stessa origine, nessun problema CORS)
-   2) interrogazione diretta del servizio ARPA (funziona solo se ARPA abilita CORS) */
-function fetchArpa(){
-  var q='?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=json';
-  var chain = fetchJSON('data/idrometri.json?t='+Date.now()).then(function(d){
-    var age=(Date.now()-Date.parse(d.aggiornato))/3600000;
-    if(!(age<CACHE_MAX_H)) throw new Error('copia locale vecchia di '+Math.round(age)+' h');
-    d._src='cache'; return d;
-  });
-  ARPA_URLS.forEach(function(u){ chain = chain.catch(function(){ return fetchJSON(u+q).then(function(d){d._src='live';return d;}); }); });
-  return chain.catch(function(e){
-    /* ultima risorsa: copia locale anche se vecchia */
-    return fetchJSON('data/idrometri.json?t='+Date.now()).then(function(d){d._src='old';return d;}).catch(function(){throw e;});
-  });
-}
-function pickField(fields,re,types,exclude){
-  for(var i=0;i<fields.length;i++){var f=fields[i];
-    if(types.indexOf(f.type)>-1 && re.test(f.name+' '+(f.alias||'')) && !(exclude&&exclude.test(f.name))) return f.name;}
-  return null;
-}
-var NUM=['esriFieldTypeDouble','esriFieldTypeSingle','esriFieldTypeInteger','esriFieldTypeSmallInteger'];
-function dist(a,b){var dx=(a[0]-b[0])*Math.cos(b[1]*Math.PI/180),dy=a[1]-b[1];return Math.sqrt(dx*dx+dy*dy)*111.2;}
+function nf(v,d){return v.toLocaleString('it-IT',{minimumFractionDigits:d,maximumFractionDigits:d});}
+function fmtT(d){return d.toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});}
+function parseD(x){ var s=String(x); if(!/[zZ]|[+-]\d\d:?\d\d$/.test(s)) s+='Z'; return new Date(s); }
 
-function update(){
-  document.getElementById('upd').textContent='aggiornamento…';
-  fetchArpa().then(function(d){
-    var fields=d.fields||[];
-    var fVal = pickField(fields,/valore|livello|misura|altezza|^h$|^val/i,NUM,/stato|sogl|^id|_id$|cod|quota|^x$|^y$/i);
-    var fDate= pickField(fields,/data|date|ora|time|istante/i,['esriFieldTypeDate']) || pickField(fields,/data|date|ora|time|istante/i,['esriFieldTypeString']);
-    var fStat= pickField(fields,/^i_stato$|stato/i,NUM);
-    var fG   = pickField(fields,/guardia|soglia.?1|sogl.*att/i,NUM);
-    var fP   = pickField(fields,/pericolo|soglia.?2|sogl.*per/i,NUM);
-    Object.keys(cards).forEach(function(n){
-      var c=cards[n], key=KEYS[n], code=(c.f.properties.Link.match(/id=(\d+)/)||[])[1]||'';
-      var me=c.f.geometry.coordinates, best=null, bd=1e9;
-      d.features.forEach(function(ft){
-        var a=ft.attributes||{}, txt=Object.keys(a).map(function(k){return String(a[k]);}).join('|').toUpperCase();
-        var byName = key && txt.indexOf(key)>-1;
-        var byCode = code && (txt.indexOf(code)>-1 || txt.indexOf(code.replace(/^0+/,''))>-1);
-        var g=ft.geometry, dd=g&&g.x!=null?dist([g.x,g.y],me):1e9;
-        var score=(byName||byCode)?-1:dd;
-        if(score<bd){bd=score;best=ft;}
-      });
-      if(!best||bd>6){ render(c,null); return; }
-      var a=best.attributes;
-      render(c,{v:fVal?a[fVal]:null,t:fDate?a[fDate]:null,s:fStat!=null?a[fStat]:null,g:fG?a[fG]:null,p:fP?a[fP]:null,raw:a});
-    });
-    var now=d.aggiornato?new Date(d.aggiornato):new Date();
-    var hm=now.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'});
-    document.getElementById('upd').textContent = d._src==='old' ? 'copia del '+now.toLocaleDateString('it-IT')+' '+hm+', non aggiornata' : 'letto alle '+hm;
-    document.getElementById('next').textContent='Prossima lettura automatica tra '+REFRESH_MIN+' min';
-  }).catch(function(err){
-    document.getElementById('upd').textContent='servizio non raggiungibile';
-    Object.keys(cards).forEach(function(n){render(cards[n],null,true);});
-    console.warn('ARPA TR_idrometri:',err);
+var cacheP=null;
+function loadCache(){
+  if(!cacheP) cacheP=fetch('data/idrometri.json?t='+Date.now(),{cache:'no-store'}).then(function(r){if(!r.ok) throw new Error(r.status);return r.json();});
+  return cacheP;
+}
+function toPts(arr,tk,vk){
+  return (arr||[]).filter(function(r){return r[vk]!=null;})
+    .map(function(r){return {t:parseD(r[tk]),v:Number(r[vk])};})
+    .filter(function(p){return !isNaN(p.t)&&isFinite(p.v);})
+    .sort(function(a,b){return a.t-b.t;});
+}
+function loadSeries(c){
+  var chain=loadCache().then(function(d){
+    var age=(Date.now()-Date.parse(d.aggiornato))/3600000;
+    if(!(age<MAX_AGE_H)) throw new Error('file vecchio');
+    var st=d.stazioni&&d.stazioni[c.name]; var pts=st?toPts(st.dati,'t','h'):[];
+    if(!pts.length) throw new Error('stazione assente'); return pts;
+  });
+  if(API_BASE){
+    var codes=[c.id.replace(/^0+/,'').slice(-6), c.id].filter(function(v,i,a){return v&&a.indexOf(v)===i;});
+    codes.forEach(function(k){ chain=chain.catch(function(){
+      return fetch(API_BASE+'/data_pie?station_code='+encodeURIComponent(k)+'&page_size=2000',{cache:'no-store'})
+        .then(function(r){if(!r.ok) throw new Error(r.status); return r.json();})
+        .then(function(d){var p=toPts(d.data,'date','hydrometric_level'); if(!p.length) throw new Error('vuoto'); return p;});
+    });});
+  }
+  return chain;
+}
+
+function spark(pts){
+  var W=300,H=96,pl=4,pr=4,pt=8,pb=16;
+  var t0=pts[0].t.getTime(), t1=pts[pts.length-1].t.getTime();
+  var vs=pts.map(function(p){return p.v;}), lo=Math.min.apply(null,vs), hi=Math.max.apply(null,vs);
+  var pad=Math.max((hi-lo)*0.15,0.05); lo-=pad; hi+=pad;
+  function X(t){return pl+(t-t0)/Math.max(1,t1-t0)*(W-pl-pr);} function Y(v){return pt+(hi-v)/(hi-lo)*(H-pt-pb);}
+  var d=pts.map(function(p,i){return (i?'L':'M')+X(p.t.getTime()).toFixed(1)+' '+Y(p.v).toFixed(1);}).join(' ');
+  var area=d+' L'+X(t1).toFixed(1)+' '+(H-pb)+' L'+X(t0).toFixed(1)+' '+(H-pb)+' Z';
+  var last=pts[pts.length-1];
+  return '<svg viewBox="0 0 '+W+' '+H+'" class="spark" role="img" aria-label="Andamento del livello negli ultimi giorni, da '+nf(Math.min.apply(null,vs),2)+' a '+nf(Math.max.apply(null,vs),2)+' m">'+
+    '<path d="'+area+'" fill="var(--acqua-ch)"/>'+
+    '<path d="'+d+'" fill="none" stroke="var(--petrolio)" stroke-width="2" stroke-linejoin="round"/>'+
+    '<circle cx="'+X(t1).toFixed(1)+'" cy="'+Y(last.v).toFixed(1)+'" r="3.5" fill="var(--prugna)"/>'+
+    '<text x="'+pl+'" y="'+(H-3)+'" font-size="10.5" fill="var(--muted)">'+fmtT(pts[0].t)+'</text>'+
+    '<text x="'+(W-pr)+'" y="'+(H-3)+'" font-size="10.5" fill="var(--muted)" text-anchor="end">'+fmtT(last.t)+'</text>'+
+    '<text x="'+(W-pr)+'" y="'+(pt+2)+'" font-size="10.5" fill="var(--muted)" text-anchor="end">max '+nf(Math.max.apply(null,vs),2)+' m</text></svg>';
+}
+
+function showFrame(c){
+  var body=c.el.querySelector('.st-body');
+  if(!body.querySelector('iframe')) body.innerHTML='<iframe src="'+esc(c.link)+'" title="Livello idrometrico '+esc(c.name)+' – ARPA Piemonte" loading="lazy"></iframe>';
+  else { var fr=body.querySelector('iframe'), u=fr.src; fr.src='about:blank'; fr.src=u; }
+  var m=idroMarkers[c.name]; if(m) m.setTooltipContent(esc(c.name));
+}
+function showData(c,pts){
+  var last=pts[pts.length-1], ref=null, i;
+  for(i=pts.length-1;i>=0;i--){ if(last.t-pts[i].t>=3*3600000){ref=pts[i];break;} }
+  var dv=ref?last.v-ref.v:null, trend='';
+  if(dv!=null){ trend = Math.abs(dv)<0.02 ? 'stabile nelle ultime 3 ore' : (dv>0?'in crescita':'in calo')+' di '+nf(Math.abs(dv),2)+' m nelle ultime 3 ore'; }
+  c.el.querySelector('.st-body').innerHTML=
+    '<div class="st-val"><span class="val">'+nf(last.v,2)+' <small>m</small></span><span class="when">'+fmtT(last.t)+'</span></div>'+
+    (trend?'<div class="trend'+(dv>0.02?' up':'')+'">'+trend+'</div>':'')+spark(pts);
+  var m=idroMarkers[c.name]; if(m) m.setTooltipContent(esc(c.name)+' <span style="font-weight:500">'+nf(last.v,2)+' m</span>');
+}
+function refreshStations(){
+  cacheP=null;
+  var upd=document.getElementById('upd');
+  Promise.all(cards.map(function(c){
+    return loadSeries(c).then(function(p){showData(c,p);return true;}).catch(function(){showFrame(c);return false;});
+  })).then(function(ok){
+    upd.textContent=(ok.some(Boolean)?'aggiornato ':'grafici ARPA ')+'alle '+new Date().toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'});
   });
 }
-function fmtTime(t){
-  if(t==null||t==='') return '';
-  var d=(typeof t==='number')?new Date(t):new Date(String(t).replace(' ','T'));
-  if(isNaN(d)) return esc(t);
-  return d.toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
-}
-function render(c,r,fail){
-  var el=c.el, val=el.querySelector('.val'), badge=el.querySelector('.badge'), t=el.querySelector('.t'), tube=el.querySelector('.tube');
-  tube.querySelectorAll('.tick').forEach(function(x){x.remove();});
-  if(!r){
-    val.innerHTML='– <small>m</small>';
-    badge.className='badge'; badge.textContent=fail?'lettura non disponibile':'stazione non trovata';
-    t.textContent=fail?'Usa “Grafico livelli” per la lettura sul sito ARPA':'';
-    el.querySelector('.fill').style.height='0';
-    el.querySelector('details.raw').hidden=true;
-    return;
-  }
-  var v=(r.v==null||r.v==='')?null:Number(r.v);
-  val.innerHTML=(v==null||isNaN(v)?'–':v.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2}))+' <small>m</small>';
-  var st=STATO[r.s]||(v==null?STATO[4]:['Normale',1]);
-  badge.className='badge s'+st[1]; badge.textContent=st[0];
-  t.textContent=fmtTime(r.t);
-  var g=Number(r.g),p=Number(r.p), top=Math.max(isFinite(p)&&p>0?p*1.15:0, isFinite(g)&&g>0?g*1.4:0, (v||0)*1.4, 1);
-  el.querySelector('.fill').style.height=(v==null||isNaN(v)?0:Math.max(3,Math.min(100,v/top*100)))+'%';
-  [['g',g],['p',p]].forEach(function(k){ if(isFinite(k[1])&&k[1]>0){var d=document.createElement('div');d.className='tick '+k[0];d.style.bottom=(k[1]/top*100)+'%';d.title=(k[0]==='g'?'Soglia di guardia ':'Soglia di pericolo ')+k[1]+' m';tube.appendChild(d);} });
-  var m=idroMarkers[el.querySelector('.name').textContent];
-  if(m){ var nm=el.querySelector('.name').textContent;
-    m.setIcon(idroIcon(st[1]));
-    m.setTooltipContent(esc(nm)+(v==null||isNaN(v)?'':' <span style="font-weight:500">'+v.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})+' m</span>')); }
-  el.querySelector('details.raw').hidden=false;
-  var tb=el.querySelector('details.raw table'); tb.innerHTML='';
-  Object.keys(r.raw).forEach(function(k){var tr=document.createElement('tr');tr.innerHTML='<td>'+esc(k)+'</td><td>'+esc(r.raw[k])+'</td>';tb.appendChild(tr);});
-}
+refreshStations(); setInterval(refreshStations, REFRESH_MIN*60000);
+
 var right=document.getElementById('right'), openR=document.getElementById('open-right');
 function setRight(o){right.classList.toggle('open',o);openR.setAttribute('aria-expanded',String(o));}
 openR.addEventListener('click',function(){setRight(!right.classList.contains('open'));});
 document.getElementById('close-right').addEventListener('click',function(){setRight(false);});
-document.getElementById('refresh').addEventListener('click',update);
-update(); setInterval(update,REFRESH_MIN*60000);
 })();
 </script>
 </body>
