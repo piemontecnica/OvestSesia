@@ -280,6 +280,7 @@ var REFRESH_MIN = 10;
    intermediario con CORS abilitato; vuoto = non usato. */
 var API_BASE = '';
 var MAX_AGE_H = 3;
+var API_CODES = {'San Sebastiano Po':'S4825','Verolengo Dora Baltea':'375'};
 var STATO = {0:['Normale',1],1:['Normale',1],2:['Guardia',2],3:['Pericolo',3],4:['Dato non disponibile',0]};
 var RIVER = {'San Sebastiano Po':'Fiume Po','Verolengo Dora Baltea':'Fiume Dora Baltea'};
 var KEYS  = {'San Sebastiano Po':'SEBASTIANO','Verolengo Dora Baltea':'VEROLENGO'};
@@ -458,7 +459,7 @@ function loadSeries(c){
     if(!pts.length) throw new Error('stazione assente'); return pts;
   });
   if(API_BASE){
-    var codes=[c.id.replace(/^0+/,'').slice(-6), c.id].filter(function(v,i,a){return v&&a.indexOf(v)===i;});
+    var codes=[API_CODES[c.name]].filter(Boolean);
     codes.forEach(function(k){ chain=chain.catch(function(){
       return fetch(API_BASE+'/data_pie?station_code='+encodeURIComponent(k)+'&page_size=2000',{cache:'no-store'})
         .then(function(r){if(!r.ok) throw new Error(r.status); return r.json();})
