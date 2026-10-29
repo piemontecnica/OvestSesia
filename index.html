@@ -61,6 +61,8 @@ section.blk h2 small{white-space:nowrap;font-size:12px;font-weight:400;color:var
 .gauge .val{font-size:30px;font-weight:600;line-height:1.1;margin-top:4px;font-variant-numeric:tabular-nums;color:var(--petrolio)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .gauge .val{color:var(--acqua)}}
 :root[data-theme="dark"] .gauge .val{color:var(--acqua)}
+.gauge .trend{font-size:12.5px;color:var(--muted)}
+.gauge .trend.up{color:var(--prugna);font-weight:500}
 .gauge .val small{font-size:15px;font-weight:500;margin-left:2px}
 .gauge .when{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
 .badge{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;padding:2px 9px 2px 7px;border-radius:99px;color:#fff;background:var(--nd);vertical-align:middle}
@@ -201,7 +203,7 @@ dialog .fallback{font-size:12.5px;color:var(--muted);padding:8px 16px;border-top
   <div class="scroll">
     <section class="blk" aria-labelledby="h-idro">
       <h2 id="h-idro">Idrometri di riferimento <small id="upd"></small></h2>
-      <p class="note">Primi idrometri ARPA a monte dell’area di intervento. Livello riferito allo zero idrometrico, ultimi 3 giorni, aggiornato ogni 10 minuti.</p>
+      <p class="note">Primi idrometri ARPA a monte dell’area di intervento. Livello riferito allo zero idrometrico, aggiornato ogni 10 minuti.</p>
       <div id="gauges"></div>
     </section>
 
@@ -417,11 +419,13 @@ var gWrap=document.getElementById('gauges');
 var cards=[];
 D.idrometri.features.forEach(function(f){
   var p=f.properties, n=p.Nome, id=(p.Link.match(/id=(\d+)/)||[])[1]||'';
-  var el=document.createElement('article'); el.className='station';
-  el.innerHTML='<div class="st-hd"><div><div class="name">'+esc(n)+'</div><div class="river">'+esc(RIVER[n]||'')+'</div></div>'+
-    '<div class="actions"><button class="btn solid" type="button" data-embed="'+esc(p.Link)+'" data-title="Idrometro '+esc(n)+' – andamento del livello">Grafico ARPA</button>'+
-    '<button class="btn" type="button" data-loc="'+esc(n)+'">In mappa</button></div></div>'+
-    '<div class="st-body"></div>';
+  var el=document.createElement('article'); el.className='gauge';
+  el.innerHTML='<div class="tube" aria-hidden="true"><div class="fill"></div></div>'+
+    '<div><div class="name">'+esc(n)+'</div><div class="river">'+esc(RIVER[n]||'')+'</div>'+
+    '<div class="val" aria-live="polite">– <small>m</small></div>'+
+    '<div class="when"></div><div class="trend"></div>'+
+    '<div class="actions"><button class="btn solid" type="button" data-embed="'+esc(p.Link)+'" data-title="Idrometro '+esc(n)+' – andamento del livello">Grafico livelli</button>'+
+    '<button class="btn" type="button" data-loc="'+esc(n)+'">Mostra in mappa</button></div></div>';
   gWrap.appendChild(el); cards.push({el:el,name:n,link:p.Link,id:id});
 });
 gWrap.addEventListener('click',function(e){
@@ -483,19 +487,24 @@ function spark(pts){
 }
 
 function showFrame(c){
-  var body=c.el.querySelector('.st-body');
-  if(!body.querySelector('iframe')) body.innerHTML='<iframe src="'+esc(c.link)+'" title="Livello idrometrico '+esc(c.name)+' – ARPA Piemonte" loading="lazy"></iframe>';
-  else { var fr=body.querySelector('iframe'), u=fr.src; fr.src='about:blank'; fr.src=u; }
+  var el=c.el;
+  el.querySelector('.val').innerHTML='– <small>m</small>';
+  el.querySelector('.when').textContent='Lettura non disponibile: apri “Grafico livelli”';
+  el.querySelector('.trend').textContent='';
+  el.querySelector('.fill').style.height='0';
   var m=idroMarkers[c.name]; if(m) m.setTooltipContent(esc(c.name));
 }
 function showData(c,pts){
-  var last=pts[pts.length-1], ref=null, i;
+  var el=c.el, last=pts[pts.length-1], ref=null, i;
   for(i=pts.length-1;i>=0;i--){ if(last.t-pts[i].t>=3*3600000){ref=pts[i];break;} }
   var dv=ref?last.v-ref.v:null, trend='';
-  if(dv!=null){ trend = Math.abs(dv)<0.02 ? 'stabile nelle ultime 3 ore' : (dv>0?'in crescita':'in calo')+' di '+nf(Math.abs(dv),2)+' m nelle ultime 3 ore'; }
-  c.el.querySelector('.st-body').innerHTML=
-    '<div class="st-val"><span class="val">'+nf(last.v,2)+' <small>m</small></span><span class="when">'+fmtT(last.t)+'</span></div>'+
-    (trend?'<div class="trend'+(dv>0.02?' up':'')+'">'+trend+'</div>':'')+spark(pts);
+  if(dv!=null){ trend = Math.abs(dv)<0.02 ? 'Stabile nelle ultime 3 ore' : (dv>0?'In crescita':'In calo')+' di '+nf(Math.abs(dv),2)+' m in 3 ore'; }
+  var hi=Math.max.apply(null,pts.map(function(p){return p.v;}));
+  el.querySelector('.val').innerHTML=nf(last.v,2)+' <small>m</small>';
+  el.querySelector('.when').textContent=fmtT(last.t)+' · max 3 gg '+nf(hi,2)+' m';
+  var tr=el.querySelector('.trend'); tr.textContent=trend; tr.classList.toggle('up',dv!=null&&dv>0.02);
+  var top=Math.max(hi*1.25,1);
+  el.querySelector('.fill').style.height=Math.max(3,Math.min(100,last.v/top*100))+'%';
   var m=idroMarkers[c.name]; if(m) m.setTooltipContent(esc(c.name)+' <span style="font-weight:500">'+nf(last.v,2)+' m</span>');
 }
 function refreshStations(){
@@ -504,7 +513,7 @@ function refreshStations(){
   Promise.all(cards.map(function(c){
     return loadSeries(c).then(function(p){showData(c,p);return true;}).catch(function(){showFrame(c);return false;});
   })).then(function(ok){
-    upd.textContent=(ok.some(Boolean)?'aggiornato ':'grafici ARPA ')+'alle '+new Date().toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'});
+    upd.textContent=ok.some(Boolean)?'aggiornato alle '+new Date().toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'}):'';
   });
 }
 refreshStations(); setInterval(refreshStations, REFRESH_MIN*60000);
