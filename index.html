@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Nuovo Scolmatore di Trino – Monitoraggio allerte meteo e piene</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌊</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+:root{
+  --petrolio:#146c69; --petrolio-dk:#0e4f4d; --prugna:#6c2d57; --malva:#a87898;
+  --acqua:#20aca8; --acqua-ch:#d4f7f6; --sabbia:#d5b43c;
+  --ink:#1f2b2b; --muted:#5b6a6a; --paper:#ffffff; --panel:#f4f8f8; --line:#d6e2e1;
+  --ok:#20aca8; --guardia:#d99a1c; --pericolo:#b8322a; --nd:#9aa5a5;
+  --font:'Jost','Century Gothic','Futura','Avenir Next',system-ui,sans-serif;
+  color-scheme:light;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ink:#e3eded; --muted:#9fb2b1; --paper:#13201f; --panel:#0f1a19; --line:#284039;
+    --acqua-ch:#183331; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{--ink:#e3eded; --muted:#9fb2b1; --paper:#13201f; --panel:#0f1a19; --line:#284039; --acqua-ch:#183331; color-scheme:dark;}
+*,*::before,*::after{box-sizing:inherit}
+html,body{height:100%;margin:0}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{font-family:var(--font);color:var(--ink);background:var(--panel);font-size:15px;line-height:1.45;display:flex;overflow:hidden}
+button{font:inherit;color:inherit}
+a{color:inherit}
+:focus-visible{outline:2px solid var(--acqua);outline-offset:2px}
+
+/* ------- pannello laterale ------- */
+#panel{width:372px;flex:0 0 372px;height:100%;display:flex;flex-direction:column;background:var(--paper);border-right:1px solid var(--line);z-index:2}
+header.brand{background:var(--petrolio);color:#fff;padding:18px 20px 16px;position:relative;overflow:hidden}
+header.brand svg.waves{position:absolute;right:-30px;bottom:-14px;width:240px;opacity:.9;pointer-events:none}
+header.brand .committente{font-size:12.5px;opacity:.85;margin:0 0 6px}
+header.brand h1{font-size:21px;line-height:1.15;font-weight:600;margin:0 0 4px;max-width:270px;position:relative}
+header.brand p.sub{margin:0;font-size:13.5px;color:#d4f7f6;position:relative;max-width:280px}
+.scroll{overflow-y:auto;flex:1;padding:4px 0 12px}
+section.blk{padding:14px 20px 6px}
+section.blk+section.blk{border-top:1px solid var(--line)}
+section.blk h2{font-size:16px;font-weight:600;color:var(--prugna);margin:0 0 10px;display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) section.blk h2{color:var(--malva)}}
+:root[data-theme="dark"] section.blk h2{color:var(--malva)}
+section.blk h2 small{white-space:nowrap;font-size:12px;font-weight:400;color:var(--muted)}
+
+/* idrometri */
+.gauge{display:grid;grid-template-columns:44px 1fr;gap:12px;padding:12px;border:1px solid var(--line);border-radius:10px;margin-bottom:10px;background:var(--paper)}
+.gauge .tube{position:relative;width:44px;height:96px;border-radius:7px;background:var(--acqua-ch);overflow:hidden;border:1px solid var(--line)}
+.gauge .fill{position:absolute;left:0;right:0;bottom:0;height:0;background:linear-gradient(180deg,var(--acqua),var(--petrolio));transition:height .8s ease}
+.gauge .tick{position:absolute;left:0;right:0;height:0;border-top:2px dashed}
+.gauge .tick.g{border-color:var(--guardia)} .gauge .tick.p{border-color:var(--pericolo)}
+.gauge .name{font-weight:600;font-size:15px;line-height:1.2}
+.gauge .river{font-size:12.5px;color:var(--muted)}
+.gauge .val{font-size:30px;font-weight:600;line-height:1.1;margin-top:4px;font-variant-numeric:tabular-nums;color:var(--petrolio)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .gauge .val{color:var(--acqua)}}
+:root[data-theme="dark"] .gauge .val{color:var(--acqua)}
+.gauge .val small{font-size:15px;font-weight:500;margin-left:2px}
+.gauge .when{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.badge{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;padding:2px 9px 2px 7px;border-radius:99px;color:#fff;background:var(--nd);vertical-align:middle}
+.badge::before{content:"";width:7px;height:7px;border-radius:50%;background:#fff}
+.badge.s1{background:var(--ok)} .badge.s2{background:var(--guardia)} .badge.s3{background:var(--pericolo)}
+.actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+.btn{border:1px solid var(--petrolio);background:transparent;color:var(--petrolio);border-radius:6px;padding:4px 10px;font-size:13px;font-weight:500;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{background:var(--petrolio);color:#fff}
+.btn.solid{background:var(--petrolio);color:#fff}
+.btn.solid:hover{background:var(--petrolio-dk)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn{border-color:var(--acqua);color:var(--acqua)} :root:not([data-theme="light"]) .btn.solid{background:var(--acqua);color:#06201f}}
+:root[data-theme="dark"] .btn{border-color:var(--acqua);color:var(--acqua)} :root[data-theme="dark"] .btn.solid{background:var(--acqua);color:#06201f}
+details.raw{margin-top:8px;font-size:12px;color:var(--muted)}
+details.raw summary{cursor:pointer}
+details.raw table{border-collapse:collapse;margin-top:4px;width:100%}
+details.raw td{border-top:1px solid var(--line);padding:2px 4px;vertical-align:top;word-break:break-all}
+.note{font-size:12.5px;color:var(--muted);margin:2px 0 10px}
+
+/* bollettini */
+.links{list-style:none;margin:0;padding:0}
+.links li{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
+.links li:first-child{border-top:0}
+.links .t{font-weight:500;font-size:14.5px;line-height:1.25}
+.links .d{font-size:12.5px;color:var(--muted)}
+.links .b{display:flex;gap:6px;flex:0 0 auto}
+
+/* livelli */
+.layer{display:flex;align-items:center;gap:10px;padding:5px 0;cursor:pointer;font-size:14.5px}
+.layer input{accent-color:var(--petrolio);width:16px;height:16px;margin:0}
+.sw{width:26px;height:14px;flex:0 0 26px;display:inline-block;border-radius:3px}
+.sw.line{height:5px;border-radius:3px}
+.sw.dot{width:16px;height:16px;flex-basis:26px;border-radius:50%;background-clip:content-box}
+.planctl{margin:4px 0 8px 26px;padding:10px 12px;background:var(--acqua-ch);border-radius:8px;font-size:13px}
+.planctl label{display:flex;align-items:center;gap:8px}
+.planctl input[type=range]{flex:1;accent-color:var(--prugna)}
+.planctl output{width:38px;text-align:right;font-variant-numeric:tabular-nums}
+.seg{display:inline-flex;border:1px solid var(--petrolio);border-radius:6px;overflow:hidden}
+.seg button{border:0;background:transparent;padding:4px 10px;font-size:13px;cursor:pointer;color:var(--petrolio)}
+.seg button[aria-pressed=true]{background:var(--petrolio);color:#fff}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .seg{border-color:var(--acqua)} :root:not([data-theme="light"]) .seg button{color:var(--acqua)} :root:not([data-theme="light"]) .seg button[aria-pressed=true]{background:var(--acqua);color:#06201f}}
+.row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:8px 0}
+
+footer.rti{border-top:1px solid var(--line);padding:10px 20px 12px;font-size:12px;color:var(--muted);background:var(--paper)}
+footer.rti .who{display:flex;flex-wrap:wrap;gap:4px 14px;color:var(--ink);font-size:12.5px;margin-bottom:4px}
+footer.rti .who b{color:var(--prugna)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) footer.rti .who b{color:var(--malva)}}
+:root[data-theme="dark"] footer.rti .who b{color:var(--malva)}
+.z-low .num{transform:scale(.5);color:transparent;transition:transform .2s}
+
+/* ------- mappa ------- */
+#map{flex:1;height:100%;background:#cfd8d7}
+.pane-plan.multiply{mix-blend-mode:multiply}
+.leaflet-container{font-family:var(--font)}
+.leaflet-popup-content{font-size:14px;line-height:1.4;margin:12px 16px}
+.leaflet-popup-content h3{margin:0 0 4px;font-size:15px;color:var(--prugna)}
+.num{width:28px;height:28px;border-radius:50%;background:var(--acqua);border:2.5px solid #fff;color:#fff;font:700 14px/23px var(--font);text-align:center;box-shadow:0 1px 4px rgba(0,0,0,.45)}
+.idro-ico{cursor:pointer;width:34px;height:34px;border-radius:9px;background:#fff;border:3px solid var(--nd);display:grid;place-items:center;box-shadow:0 1px 5px rgba(0,0,0,.4)}
+.idro-ico svg{width:20px;height:20px}
+.idro-ico.s1{border-color:var(--ok)} .idro-ico.s2{border-color:var(--guardia)} .idro-ico.s3{border-color:var(--pericolo)}
+.lbl{background:rgba(255,255,255,.92);border:0;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.3);font:600 12.5px var(--font);color:var(--petrolio-dk);padding:2px 7px}
+.lbl::before{display:none}
+.mapbar{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:800;display:flex;gap:6px;background:var(--paper);padding:5px;border-radius:9px;box-shadow:0 1px 6px rgba(0,0,0,.3)}
+.mapbar .btn{border:0;padding:5px 11px;white-space:nowrap}
+.mapbar .btn[aria-pressed=true]{background:var(--petrolio);color:#fff}
+#wrap{position:relative;flex:1;height:100%;display:flex}
+
+/* modale */
+dialog{border:0;border-radius:12px;padding:0;width:min(980px,94vw);height:min(720px,88vh);background:var(--paper);color:var(--ink);box-shadow:0 10px 40px rgba(0,0,0,.4)}
+dialog::backdrop{background:rgba(14,40,39,.55)}
+dialog .hd{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;background:var(--petrolio);color:#fff}
+dialog .hd h3{margin:0;font-size:16px;font-weight:600}
+dialog .hd .btn{border-color:#fff;color:#fff}
+dialog .hd .btn:hover{background:#fff;color:var(--petrolio)}
+dialog .bd{height:calc(100% - 52px);display:flex;flex-direction:column}
+dialog iframe{flex:1;border:0;width:100%;background:#fff}
+dialog .fallback{font-size:12.5px;color:var(--muted);padding:8px 16px;border-top:1px solid var(--line)}
+
+/* colonna destra: allerta comune */
+#right{width:390px;flex:0 0 390px;height:100%;display:flex;flex-direction:column;background:var(--paper);border-left:1px solid var(--line);z-index:2}
+#right .hd{background:var(--petrolio);color:#fff;padding:12px 16px 10px;flex:0 0 auto}
+#right .hd h2{margin:0;font-size:16px;font-weight:600}
+#right .hd p{margin:2px 0 0;font-size:12.5px;color:#d4f7f6}
+#right .body{flex:1 1 auto;min-height:0;display:flex;overflow-y:auto;background:#fff}
+#right iframe{display:block;flex:1;width:100%;height:100%;min-height:660px;border:0}
+#right .ft{flex:0 0 auto;border-top:1px solid var(--line);padding:6px 16px;font-size:12px;color:var(--muted);display:flex;justify-content:space-between;align-items:center;gap:8px}
+#right .x{display:none}
+.mapbar .only-mid{display:none}
+@media (max-width:1439px) and (min-width:761px){
+  #right{position:absolute;top:0;right:0;bottom:0;width:min(390px,92vw);transform:translateX(100%);transition:transform .25s ease;box-shadow:-4px 0 18px rgba(0,0,0,.25);z-index:900}
+  #right.open{transform:none}
+  #right .x{display:inline-flex;border-color:#fff;color:#fff}
+  .mapbar .only-mid{display:inline-flex}
+  body{position:relative}
+}
+#mobtoggle{display:none}
+@media (max-width:760px){
+  body{flex-direction:column;overflow:auto;height:auto}
+  #wrap{order:1} #right{order:2;width:100%;flex:0 0 auto;height:auto;border-left:0;border-top:1px solid var(--line)} #panel{order:3}
+  #right .body{overflow:visible} #right iframe{height:680px}
+  #wrap{height:62vh;flex:0 0 62vh}
+  #panel{width:100%;flex:1 1 auto;height:auto;border-right:0}
+  .scroll{overflow:visible}
+  header.brand h1{font-size:19px}
+  .mapbar{top:auto;bottom:22px}
+}
+@media (prefers-reduced-motion:reduce){.gauge .fill,#right{transition:none}}
+</style>
+</head>
+<body>
+
+<aside id="panel" aria-label="Pannello di monitoraggio">
+  <header class="brand">
+    <svg class="waves" viewBox="0 0 240 90" aria-hidden="true">
+      <path d="M0 50 C40 20 80 80 130 45 S210 20 240 40 V90 H0Z" fill="#a87898" opacity=".55"/>
+      <path d="M0 64 C50 40 90 90 140 60 S210 45 240 58 V90 H0Z" fill="#6c2d57" opacity=".7"/>
+      <path d="M0 76 C45 62 100 96 150 74 S215 66 240 74 V90 H0Z" fill="#20aca8" opacity=".75"/>
+    </svg>
+    <p class="committente">Associazione d’Irrigazione Ovest Sesia · Trino (VC)</p>
+    <h1>Nuovo Scolmatore di Trino, II lotto stralcio</h1>
+    <p class="sub">Monitoraggio allerte meteo e piene del Po per il cantiere</p>
+  </header>
+
+  <div class="scroll">
+    <section class="blk" aria-labelledby="h-idro">
+      <h2 id="h-idro">Idrometri di riferimento <small id="upd">collegamento…</small></h2>
+      <p class="note">Primi idrometri ARPA a monte dell’area di intervento. Livello riferito allo zero idrometrico; dato aggiornato ogni 10 minuti con circa un’ora di ritardo.</p>
+      <div id="gauges"></div>
+      <div class="row"><button class="btn" id="refresh" type="button">Aggiorna</button><span class="note" style="margin:0" id="next"></span></div>
+    </section>
+
+    <section class="blk" aria-labelledby="h-boll">
+      <h2 id="h-boll">Bollettini e strumenti</h2>
+      <ul class="links">
+        <li><div><div class="t">Allerta meteoidrologica</div><div class="d">ARPA Piemonte, emesso ogni giorno entro le 13</div></div>
+          <div class="b"><button class="btn solid" type="button" data-embed="https://www.arpa.piemonte.it/rischi_naturali/snippets_arpa/allerta/" data-title="Bollettino di allerta meteoidrologica – ARPA Piemonte">Apri</button></div></li>
+        <li><div><div class="t">Pericolo attuale</div><div class="d">Mappa per comune, aggiornata ogni 15 minuti</div></div>
+          <div class="b"><button class="btn solid" type="button" data-embed="https://www.arpa.piemonte.it/rischi_naturali/snippets_arpa/mappa_pericolo/" data-title="Pericolo attuale – ARPA Piemonte">Apri</button></div></li>
+        <li><div><div class="t">Previsione piene e bollettino meteo</div><div class="d">Sezione Bollettini di ARPA Piemonte (comune di Trino)</div></div>
+          <div class="b"><a class="btn" href="https://www.arpa.piemonte.it/bollettini" target="_blank" rel="noopener">Sito ARPA</a></div></li>
+        <li><div><div class="t">Radar e satellite</div><div class="d">Windy, centrato sul cantiere</div></div>
+          <div class="b"><a class="btn" href="https://www.windy.com/-Radar-radar?radar,45.185,8.290,10" target="_blank" rel="noopener">Windy</a></div></li>
+        <li><div><div class="t">Meteo 3R</div><div class="d">App ARPA con letture e notifiche di allerta</div></div>
+          <div class="b"><a class="btn" href="https://www.meteo3r.it" target="_blank" rel="noopener">Meteo 3R</a></div></li>
+      </ul>
+    </section>
+
+    <section class="blk" aria-labelledby="h-liv">
+      <h2 id="h-liv">Livelli della mappa</h2>
+      <div id="layers"></div>
+      <div class="row"><span>Sfondo</span>
+        <div class="seg" role="group" aria-label="Sfondo">
+          <button type="button" data-base="sat" aria-pressed="true">Satellite</button>
+          <button type="button" data-base="map" aria-pressed="false">Mappa</button>
+        </div></div>
+    </section>
+  </div>
+
+  <footer class="rti">
+    <div class="who"><b>RTI</b><span>Bertini Srl</span><span>Impresa F.lli Sogno &amp; Figli Srl</span><span>So.d.i.s. Srl</span></div>
+    Dati idrometrici e bollettini: ARPA Piemonte (CC BY 4.0). Idrografia: BDTRE Regione Piemonte.
+  </footer>
+</aside>
+
+<div id="wrap">
+  <div class="mapbar" role="group" aria-label="Inquadratura">
+    <button class="btn" type="button" data-view="cantiere" aria-pressed="true">Area di intervento</button>
+    <button class="btn" type="button" data-view="bacino" aria-pressed="false">Idrometri e Po</button>
+    <button class="btn only-mid" type="button" id="open-right" aria-controls="right" aria-expanded="false">Allerta Trino</button>
+  </div>
+  <div id="map" aria-label="Mappa dell’area di intervento"></div>
+</div>
+
+<aside id="right" aria-labelledby="h-right">
+  <div class="hd" style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+    <div><h2 id="h-right">Allerta sul comune di Trino</h2><p>Widget ARPA Piemonte, aggiornato in automatico</p></div>
+    <button class="btn x" type="button" id="close-right">Chiudi</button>
+  </div>
+  <div class="body"><iframe src="https://www.arpa.piemonte.it/rischi_naturali/widget/comuni/002148" title="Widget ARPA Piemonte – allerta per il comune di Trino" loading="eager"></iframe></div>
+  <div class="ft"><span>Fonte: ARPA Piemonte</span><a class="btn" href="https://www.arpa.piemonte.it/rischi_naturali/widget/comuni/002148" target="_blank" rel="noopener">Apri</a></div>
+</aside>
+
+<dialog id="dlg">
+  <div class="hd"><h3 id="dlg-t"></h3>
+    <div style="display:flex;gap:6px"><a class="btn" id="dlg-ext" target="_blank" rel="noopener">Apri sul sito ARPA</a><button class="btn" type="button" id="dlg-x">Chiudi</button></div></div>
+  <div class="bd"><iframe id="dlg-f" title="Contenuto ARPA Piemonte" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+    <div class="fallback">Se la pagina non compare nel riquadro, il sito ARPA ne impedisce l’incorporamento: usa “Apri sul sito ARPA”.</div></div>
+</dialog>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="data/layers.js"></script>
+<script>
+(function(){
+'use strict';
+var D = window.LAYERS;
+var ARPA_SERVICE = 'https://webgis.arpa.piemonte.it/server/rest/services/meteorologia_clima/TR_idrometri/MapServer/4/query';
+var REFRESH_MIN = 10;
+var STATO = {0:['Normale',1],1:['Normale',1],2:['Guardia',2],3:['Pericolo',3],4:['Dato non disponibile',0]};
+var RIVER = {'San Sebastiano Po':'Fiume Po','Verolengo Dora Baltea':'Fiume Dora Baltea'};
+var KEYS  = {'San Sebastiano Po':'SEBASTIANO','Verolengo Dora Baltea':'VEROLENGO'};
+
+/* ---------- mappa ---------- */
+var map = L.map('map',{zoomControl:true, maxZoom:20, preferCanvas:false});
+map.attributionControl.setPrefix('<a href="https://leafletjs.com">Leaflet</a>');
+
+var bases = {
+  sat: L.layerGroup([
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxNativeZoom:19,maxZoom:20,attribution:'Immagini © Esri, Maxar, Earthstar Geographics'}),
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',{maxNativeZoom:19,maxZoom:20,opacity:.85})
+  ]),
+  map: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxNativeZoom:19,maxZoom:20,attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'})
+};
+bases.sat.addTo(map);
+
+map.createPane('plan');  map.getPane('plan').style.zIndex = 250;
+map.getPane('plan').classList.add('pane-plan','multiply');
+map.createPane('water'); map.getPane('water').style.zIndex = 380;
+map.createPane('work');  map.getPane('work').style.zIndex = 400;
+map.createPane('track'); map.getPane('track').style.zIndex = 420;
+
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim();}
+var C = {petrolio:'#146c69',prugna:'#6c2d57',malva:'#a87898',acqua:'#20aca8',sabbia:'#d5b43c',water:'#7cc6d6',waterLine:'#2c8aa3'};
+
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+
+var planimetria = L.imageOverlay('data/planimetria.webp',
+  [[45.173192415907,8.271725649245],[45.189548980315,8.310070749282]],
+  {pane:'plan',opacity:.85,interactive:false,attribution:'Planimetria generale di progetto (TAV. 4)'});
+
+var fiumi = L.geoJSON(D.fiumi,{pane:'water',style:{color:C.waterLine,weight:1,fillColor:C.water,fillOpacity:.55},
+  onEachFeature:function(f,l){l.bindTooltip(esc(f.properties.nome),{sticky:true});}});
+var canali = L.geoJSON(D.canali,{pane:'water',style:{color:C.waterLine,weight:1,fillColor:C.water,fillOpacity:.75},
+  onEachFeature:function(f,l){l.bindTooltip(esc(f.properties.nome),{sticky:true});}});
+
+var cantiere = L.geoJSON(D.cantiere,{pane:'work',style:function(f){
+    var cb=/campo base/i.test(f.properties.Nome);
+    return {color:cb?C.prugna:'#8a6d12',weight:1.5,dashArray:cb?'6 4':null,fillColor:cb?C.malva:C.sabbia,fillOpacity:cb?.45:.5};},
+  onEachFeature:function(f,l){l.bindTooltip(esc(f.properties.Nome),{sticky:true});}});
+
+var tracciato = L.layerGroup([
+  L.geoJSON(D.tracciato,{pane:'track',interactive:false,style:{color:'#fff',weight:10,opacity:.9,lineCap:'round'}}),
+  L.geoJSON(D.tracciato,{pane:'track',style:{color:C.prugna,weight:5.5,lineCap:'round'},
+    onEachFeature:function(f,l){l.bindTooltip('Nuovo canale scolmatore – II lotto stralcio',{sticky:true});}})
+]);
+
+var interventi = L.geoJSON(D.interventi,{pointToLayer:function(f,ll){
+    return L.marker(ll,{icon:L.divIcon({className:'',html:'<div class="num">'+f.properties.n+'</div>',iconSize:[28,28],iconAnchor:[14,14]}),
+      title:f.properties.Nome,zIndexOffset:500});},
+  onEachFeature:function(f,l){var p=f.properties;
+    l.bindPopup('<h3>'+esc(p.Nome)+'</h3>'+esc(p.Descrizione));}});
+
+var vento = L.geoJSON(D.vento,{pane:'track',style:{color:'#fdd003',weight:4,dashArray:'2 7',lineCap:'round'},
+  onEachFeature:function(f,l){l.bindTooltip('Ciclovia VEN-TO',{sticky:true});}});
+var deviazione = L.geoJSON(D.deviazione_ciclabile,{pane:'track',style:{color:'#e03a3a',weight:4,dashArray:'2 7',lineCap:'round'},
+  onEachFeature:function(f,l){l.bindTooltip('Deviazione ciclabile durante l’intervento 2',{sticky:true});}});
+
+var gaugeSvg='<svg viewBox="0 0 24 24" fill="none" stroke="#146c69" stroke-width="2" stroke-linecap="round"><path d="M7 3v18M7 6h4M7 10h3M7 14h4M7 18h3"/><path d="M13 15c2-1.6 4-1.6 6 0" stroke="#20aca8"/><path d="M13 19c2-1.6 4-1.6 6 0" stroke="#20aca8"/></svg>';
+var idroMarkers = {};
+var idrometri = L.geoJSON(D.idrometri,{pointToLayer:function(f,ll){
+    var m=L.marker(ll,{icon:idroIcon(0),title:'Apri il grafico dei livelli – '+f.properties.Nome,zIndexOffset:600});
+    idroMarkers[f.properties.Nome]=m;
+    m.on('click',function(){ openEmbed(f.properties.Link,'Idrometro '+f.properties.Nome+' – andamento del livello'); });
+    m.bindTooltip(esc(f.properties.Nome),{permanent:true,direction:'right',offset:[18,0],className:'lbl'});
+    return m;}});
+function idroIcon(s){return L.divIcon({className:'',html:'<div class="idro-ico s'+s+'">'+gaugeSvg+'</div>',iconSize:[34,34],iconAnchor:[17,17]});}
+
+var LAYERS = [
+  {id:'tracciato',  label:'Tracciato del nuovo scolmatore', layer:tracciato,  on:true,  sw:'<span class="sw line" style="background:'+C.prugna+';box-shadow:0 0 0 2px #fff inset"></span>'},
+  {id:'interventi', label:'Interventi puntuali (1–6)',      layer:interventi, on:true,  sw:'<span class="sw dot" style="background:'+C.acqua+';border:2px solid #fff;box-shadow:0 0 0 1px #9bb"></span>'},
+  {id:'cantiere',   label:'Campo base e viabilità di cantiere', layer:cantiere, on:true, sw:'<span class="sw" style="background:linear-gradient(90deg,'+C.malva+' 50%,'+C.sabbia+' 50%)"></span>'},
+  {id:'canali',     label:'Reticolo irriguo (Roggione, Magrelli…)', layer:canali, on:true, sw:'<span class="sw" style="background:'+C.water+';border:1px solid '+C.waterLine+'"></span>'},
+  {id:'fiumi',      label:'Fiume Po e Dora Baltea',         layer:fiumi,      on:true,  sw:'<span class="sw" style="background:'+C.water+';opacity:.7;border:1px solid '+C.waterLine+'"></span>'},
+  {id:'idrometri',  label:'Idrometri ARPA',                 layer:idrometri,  on:true,  sw:'<span class="sw dot" style="background:#fff;border:3px solid '+C.acqua+';border-radius:5px"></span>'},
+  {id:'vento',      label:'Ciclovia VEN-TO',                layer:vento,      on:false, sw:'<span class="sw line" style="background:repeating-linear-gradient(90deg,#fdd003 0 3px,transparent 3px 7px)"></span>'},
+  {id:'deviazione', label:'Deviazione ciclabile',           layer:deviazione, on:false, sw:'<span class="sw line" style="background:repeating-linear-gradient(90deg,#e03a3a 0 3px,transparent 3px 7px)"></span>'},
+  {id:'planimetria',label:'Planimetria generale di progetto', layer:planimetria, on:false, sw:'<span class="sw" style="background:repeating-linear-gradient(45deg,#cfd6d6 0 3px,#fff 3px 6px);border:1px solid #9bb"></span>'}
+];
+
+var lc = document.getElementById('layers');
+LAYERS.forEach(function(o){
+  var lab=document.createElement('label'); lab.className='layer';
+  lab.innerHTML='<input type="checkbox" id="ly-'+o.id+'"'+(o.on?' checked':'')+'>'+o.sw+'<span>'+o.label+'</span>';
+  lc.appendChild(lab);
+  var cb=lab.querySelector('input');
+  if(o.on) o.layer.addTo(map);
+  cb.addEventListener('change',function(){ if(cb.checked) o.layer.addTo(map); else map.removeLayer(o.layer); if(o.id==='planimetria') pc.hidden=!cb.checked; });
+  if(o.id==='planimetria'){
+    var pc=document.createElement('div'); pc.className='planctl'; pc.hidden=!o.on;
+    pc.innerHTML='<label for="op">Opacità <input type="range" id="op" min="0" max="100" value="85"><output id="opv">85%</output></label>'+
+      '<label style="margin-top:6px"><input type="checkbox" id="mul" checked style="accent-color:'+C.prugna+'"> Rendi trasparente il fondo bianco</label>';
+    lc.appendChild(pc);
+    pc.querySelector('#op').addEventListener('input',function(e){planimetria.setOpacity(e.target.value/100);pc.querySelector('#opv').textContent=e.target.value+'%';});
+    pc.querySelector('#mul').addEventListener('change',function(e){map.getPane('plan').classList.toggle('multiply',e.target.checked);});
+  }
+});
+
+document.querySelectorAll('[data-base]').forEach(function(b){
+  b.addEventListener('click',function(){
+    var k=b.dataset.base;
+    Object.keys(bases).forEach(function(n){ if(n===k) bases[n].addTo(map); else map.removeLayer(bases[n]); });
+    document.querySelectorAll('[data-base]').forEach(function(x){x.setAttribute('aria-pressed',String(x===b));});
+  });
+});
+
+/* inquadrature */
+var viewCantiere = L.featureGroup([L.geoJSON(D.tracciato),L.geoJSON(D.cantiere)]).getBounds().pad(0.12);
+var viewBacino   = L.featureGroup([L.geoJSON(D.tracciato),L.geoJSON(D.idrometri)]).getBounds().pad(0.12);
+function setView(k){
+  map.fitBounds(k==='bacino'?viewBacino:viewCantiere);
+  document.querySelectorAll('[data-view]').forEach(function(x){x.setAttribute('aria-pressed',String(x.dataset.view===k));});
+}
+document.querySelectorAll('[data-view]').forEach(function(b){b.addEventListener('click',function(){setView(b.dataset.view);});});
+function zcls(){map.getContainer().classList.toggle('z-low',map.getZoom()<14);}
+map.on('zoomend',zcls);
+setView('cantiere'); zcls();
+if(location.hash==='#bacino') setView('bacino');
+
+/* ---------- modale ARPA ---------- */
+var dlg=document.getElementById('dlg'), frm=document.getElementById('dlg-f');
+function openEmbed(url,title){
+  document.getElementById('dlg-t').textContent=title;
+  document.getElementById('dlg-ext').href=url;
+  frm.src=url;
+  if(dlg.showModal) dlg.showModal(); else window.open(url,'_blank');
+}
+document.getElementById('dlg-x').addEventListener('click',function(){dlg.close();});
+dlg.addEventListener('close',function(){frm.src='about:blank';});
+document.addEventListener('click',function(e){
+  var b=e.target.closest('[data-embed]'); if(b){openEmbed(b.dataset.embed,b.dataset.title);}
+});
+
+/* ---------- idrometri: schede e letture ---------- */
+var gWrap=document.getElementById('gauges');
+var cards={};
+D.idrometri.features.forEach(function(f){
+  var p=f.properties, n=p.Nome;
+  var el=document.createElement('article'); el.className='gauge';
+  el.innerHTML='<div class="tube" aria-hidden="true"><div class="fill"></div></div>'+
+    '<div><div class="name">'+esc(n)+'</div><div class="river">'+esc(RIVER[n]||'')+'</div>'+
+    '<div class="val" aria-live="polite">– <small>m</small></div>'+
+    '<div class="when"><span class="badge">in attesa</span> <span class="t"></span></div>'+
+    '<div class="actions"><button class="btn solid" type="button" data-embed="'+esc(p.Link)+'" data-title="Idrometro '+esc(n)+' – andamento del livello">Grafico livelli</button>'+
+    '<button class="btn" type="button" data-loc="'+esc(n)+'">Mostra in mappa</button></div>'+
+    '<details class="raw"><summary>Dettaglio dato ARPA</summary><table></table></details></div>';
+  gWrap.appendChild(el); cards[n]={el:el,f:f};
+});
+gWrap.addEventListener('click',function(e){
+  var b=e.target.closest('[data-loc]'); if(!b) return;
+  var m=idroMarkers[b.dataset.loc]; if(!m) return;
+  if(!map.hasLayer(idrometri)){ idrometri.addTo(map); document.getElementById('ly-idrometri').checked=true; }
+  map.flyTo(m.getLatLng(),13,{duration:.8});
+});
+
+function jsonp(url){
+  return new Promise(function(res,rej){
+    var cb='arpa_cb_'+Date.now()+Math.floor(Math.random()*1e4);
+    var s=document.createElement('script'); var t=setTimeout(function(){clean();rej(new Error('timeout'));},15000);
+    function clean(){clearTimeout(t);delete window[cb];s.remove();}
+    window[cb]=function(d){clean();res(d);};
+    s.onerror=function(){clean();rej(new Error('jsonp'));};
+    s.src=url+'&callback='+cb; document.head.appendChild(s);
+  });
+}
+var ARPA_URLS = [
+  ARPA_SERVICE,
+  'https://webgis.arpa.piemonte.it/ags/rest/services/meteorologia_clima/TR_idrometri/MapServer/4/query'
+];
+var CACHE_MAX_H = 3;
+function fetchJSON(url){
+  return fetch(url,{cache:'no-store'}).then(function(r){if(!r.ok) throw new Error('HTTP '+r.status); return r.json();})
+    .then(function(d){ if(!d||!d.features||!d.features.length) throw new Error((d&&d.error&&d.error.message)||'risposta vuota'); return d; });
+}
+/* 1) copia aggiornata dalla GitHub Action (stessa origine, nessun problema CORS)
+   2) interrogazione diretta del servizio ARPA (funziona solo se ARPA abilita CORS) */
+function fetchArpa(){
+  var q='?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=json';
+  var chain = fetchJSON('data/idrometri.json?t='+Date.now()).then(function(d){
+    var age=(Date.now()-Date.parse(d.aggiornato))/3600000;
+    if(!(age<CACHE_MAX_H)) throw new Error('copia locale vecchia di '+Math.round(age)+' h');
+    d._src='cache'; return d;
+  });
+  ARPA_URLS.forEach(function(u){ chain = chain.catch(function(){ return fetchJSON(u+q).then(function(d){d._src='live';return d;}); }); });
+  return chain.catch(function(e){
+    /* ultima risorsa: copia locale anche se vecchia */
+    return fetchJSON('data/idrometri.json?t='+Date.now()).then(function(d){d._src='old';return d;}).catch(function(){throw e;});
+  });
+}
+function pickField(fields,re,types,exclude){
+  for(var i=0;i<fields.length;i++){var f=fields[i];
+    if(types.indexOf(f.type)>-1 && re.test(f.name+' '+(f.alias||'')) && !(exclude&&exclude.test(f.name))) return f.name;}
+  return null;
+}
+var NUM=['esriFieldTypeDouble','esriFieldTypeSingle','esriFieldTypeInteger','esriFieldTypeSmallInteger'];
+function dist(a,b){var dx=(a[0]-b[0])*Math.cos(b[1]*Math.PI/180),dy=a[1]-b[1];return Math.sqrt(dx*dx+dy*dy)*111.2;}
+
+function update(){
+  document.getElementById('upd').textContent='aggiornamento…';
+  fetchArpa().then(function(d){
+    var fields=d.fields||[];
+    var fVal = pickField(fields,/valore|livello|misura|altezza|^h$|^val/i,NUM,/stato|sogl|^id|_id$|cod|quota|^x$|^y$/i);
+    var fDate= pickField(fields,/data|date|ora|time|istante/i,['esriFieldTypeDate']) || pickField(fields,/data|date|ora|time|istante/i,['esriFieldTypeString']);
+    var fStat= pickField(fields,/^i_stato$|stato/i,NUM);
+    var fG   = pickField(fields,/guardia|soglia.?1|sogl.*att/i,NUM);
+    var fP   = pickField(fields,/pericolo|soglia.?2|sogl.*per/i,NUM);
+    Object.keys(cards).forEach(function(n){
+      var c=cards[n], key=KEYS[n], code=(c.f.properties.Link.match(/id=(\d+)/)||[])[1]||'';
+      var me=c.f.geometry.coordinates, best=null, bd=1e9;
+      d.features.forEach(function(ft){
+        var a=ft.attributes||{}, txt=Object.keys(a).map(function(k){return String(a[k]);}).join('|').toUpperCase();
+        var byName = key && txt.indexOf(key)>-1;
+        var byCode = code && (txt.indexOf(code)>-1 || txt.indexOf(code.replace(/^0+/,''))>-1);
+        var g=ft.geometry, dd=g&&g.x!=null?dist([g.x,g.y],me):1e9;
+        var score=(byName||byCode)?-1:dd;
+        if(score<bd){bd=score;best=ft;}
+      });
+      if(!best||bd>6){ render(c,null); return; }
+      var a=best.attributes;
+      render(c,{v:fVal?a[fVal]:null,t:fDate?a[fDate]:null,s:fStat!=null?a[fStat]:null,g:fG?a[fG]:null,p:fP?a[fP]:null,raw:a});
+    });
+    var now=d.aggiornato?new Date(d.aggiornato):new Date();
+    var hm=now.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'});
+    document.getElementById('upd').textContent = d._src==='old' ? 'copia del '+now.toLocaleDateString('it-IT')+' '+hm+', non aggiornata' : 'letto alle '+hm;
+    document.getElementById('next').textContent='Prossima lettura automatica tra '+REFRESH_MIN+' min';
+  }).catch(function(err){
+    document.getElementById('upd').textContent='servizio non raggiungibile';
+    Object.keys(cards).forEach(function(n){render(cards[n],null,true);});
+    console.warn('ARPA TR_idrometri:',err);
+  });
+}
+function fmtTime(t){
+  if(t==null||t==='') return '';
+  var d=(typeof t==='number')?new Date(t):new Date(String(t).replace(' ','T'));
+  if(isNaN(d)) return esc(t);
+  return d.toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+function render(c,r,fail){
+  var el=c.el, val=el.querySelector('.val'), badge=el.querySelector('.badge'), t=el.querySelector('.t'), tube=el.querySelector('.tube');
+  tube.querySelectorAll('.tick').forEach(function(x){x.remove();});
+  if(!r){
+    val.innerHTML='– <small>m</small>';
+    badge.className='badge'; badge.textContent=fail?'lettura non disponibile':'stazione non trovata';
+    t.textContent=fail?'Usa “Grafico livelli” per la lettura sul sito ARPA':'';
+    el.querySelector('.fill').style.height='0';
+    el.querySelector('details.raw').hidden=true;
+    return;
+  }
+  var v=(r.v==null||r.v==='')?null:Number(r.v);
+  val.innerHTML=(v==null||isNaN(v)?'–':v.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2}))+' <small>m</small>';
+  var st=STATO[r.s]||(v==null?STATO[4]:['Normale',1]);
+  badge.className='badge s'+st[1]; badge.textContent=st[0];
+  t.textContent=fmtTime(r.t);
+  var g=Number(r.g),p=Number(r.p), top=Math.max(isFinite(p)&&p>0?p*1.15:0, isFinite(g)&&g>0?g*1.4:0, (v||0)*1.4, 1);
+  el.querySelector('.fill').style.height=(v==null||isNaN(v)?0:Math.max(3,Math.min(100,v/top*100)))+'%';
+  [['g',g],['p',p]].forEach(function(k){ if(isFinite(k[1])&&k[1]>0){var d=document.createElement('div');d.className='tick '+k[0];d.style.bottom=(k[1]/top*100)+'%';d.title=(k[0]==='g'?'Soglia di guardia ':'Soglia di pericolo ')+k[1]+' m';tube.appendChild(d);} });
+  var m=idroMarkers[el.querySelector('.name').textContent];
+  if(m){ var nm=el.querySelector('.name').textContent;
+    m.setIcon(idroIcon(st[1]));
+    m.setTooltipContent(esc(nm)+(v==null||isNaN(v)?'':' <span style="font-weight:500">'+v.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})+' m</span>')); }
+  el.querySelector('details.raw').hidden=false;
+  var tb=el.querySelector('details.raw table'); tb.innerHTML='';
+  Object.keys(r.raw).forEach(function(k){var tr=document.createElement('tr');tr.innerHTML='<td>'+esc(k)+'</td><td>'+esc(r.raw[k])+'</td>';tb.appendChild(tr);});
+}
+var right=document.getElementById('right'), openR=document.getElementById('open-right');
+function setRight(o){right.classList.toggle('open',o);openR.setAttribute('aria-expanded',String(o));}
+openR.addEventListener('click',function(){setRight(!right.classList.contains('open'));});
+document.getElementById('close-right').addEventListener('click',function(){setRight(false);});
+document.getElementById('refresh').addEventListener('click',update);
+update(); setInterval(update,REFRESH_MIN*60000);
+})();
+</script>
+</body>
+</html>
